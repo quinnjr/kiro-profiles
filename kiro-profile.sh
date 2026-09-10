@@ -15,7 +15,9 @@
 # and no default are active, KIRO_HOME is left unset so Kiro uses ~/.kiro
 # exactly as a stock install would.
 #
-# Supports POSIX shells (sh/dash/ash/ksh), bash, and zsh on Linux and macOS.
+# Supports bash and zsh on Linux and macOS. The hyphenated `kiro-cli` /
+# `kiro-profile` function names are not valid in strict POSIX sh (dash), so a
+# pure-sh /bin/sh is not a supported sourcing shell.
 # Windows / MSYS is intentionally not supported yet.
 
 # --- Internal helpers ---

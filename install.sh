@@ -10,8 +10,10 @@
 
 set -eu
 
-# Directory this script lives in (the repo checkout).
-_src_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Directory this script lives in (the repo checkout). Set CDPATH to empty for
+# the duration of the cd so a user's CDPATH can't redirect it.
+CDPATH=''
+_src_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 
 _install_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/kiro-profile"
 
@@ -29,6 +31,7 @@ fi
 printf 'Installed kiro-profile.sh to: %s\n' "${_install_dir}/kiro-profile.sh"
 printf '\n'
 printf 'Add this line to your ~/.zshrc or ~/.bashrc:\n\n'
+# shellcheck disable=SC2016  # the ${XDG_DATA_HOME:-...} must print literally
 printf '    . "${XDG_DATA_HOME:-$HOME/.local/share}/kiro-profile/kiro-profile.sh"\n\n'
 printf 'Then reload your shell (source ~/.zshrc) and create your first profile:\n\n'
 printf '    kiro-profile create --init work\n'
