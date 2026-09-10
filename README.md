@@ -5,8 +5,8 @@ machine, the same way you'd juggle separate config directories for any other
 tool — by pointing an environment variable at a per-profile directory.
 
 Kiro stores all of its per-user state (auth/login, settings, agents, prompts,
-skills, steering, sessions) under `KIRO_HOME`, defaulting to `~/.kiro`.
-`kiro-profiles` gives each profile its own `KIRO_HOME` directory under
+skills, steering, sessions) under `_KIRO_HOME`, defaulting to `~/.kiro`.
+`kiro-profiles` gives each profile its own `_KIRO_HOME` directory under
 `${XDG_DATA_HOME:-~/.local/share}/kiro-profiles/<name>` and wraps `kiro-cli` so
 the right one is always active — including optional directory-local
 auto-switching via a `.kiro-profile` file.
@@ -39,10 +39,10 @@ kiro-cli login          # authenticates the "work" account into that profile
 ## How it works
 
 - Each profile is a directory: `${XDG_DATA_HOME:-~/.local/share}/kiro-profiles/<name>`.
-- `kiro-profile use <name>` exports `KIRO_HOME` to that directory for the session.
+- `kiro-profile use <name>` exports `_KIRO_HOME` to that directory for the session.
 - The `kiro-cli` wrapper resolves a profile before launching: an explicit
   `use` wins, otherwise a directory-local `.kiro-profile`, otherwise the
-  configured default. If none resolve, `KIRO_HOME` is left **unset** so Kiro
+  configured default. If none resolve, `_KIRO_HOME` is left **unset** so Kiro
   behaves exactly like a stock install (`~/.kiro`).
 - Log in once per profile (`kiro-cli login` while the profile is active) and
   each keeps its own independent session.
@@ -53,7 +53,7 @@ Already logged in under the default `~/.kiro`? Snapshot it into a managed
 profile instead of starting over:
 
 ```sh
-kiro-profile import work            # copies ~/.kiro (or $KIRO_HOME) into "work"
+kiro-profile import work            # copies ~/.kiro (or $_KIRO_HOME) into "work"
 kiro-profile import --from ~/some/other/.kiro personal
 kiro-profile use work               # now on the imported profile
 ```
@@ -74,12 +74,12 @@ profile directory. `create --from <dir>` does the same thing as part of a
 | `kiro-profile` | Show current profile status |
 | `kiro-profile use <name>` | Switch the session to a profile (pins it) |
 | `kiro-profile create [--init] [--from <dir>] <name>` | Create a profile (`--init` writes a `settings/cli.json` skeleton; `--from` copies an existing directory into it) |
-| `kiro-profile import [--from <dir>] <name>` | Create a profile from an existing Kiro directory (defaults to `$KIRO_HOME`, else `~/.kiro`) |
+| `kiro-profile import [--from <dir>] <name>` | Create a profile from an existing Kiro directory (defaults to `$_KIRO_HOME`, else `~/.kiro`) |
 | `kiro-profile list` / `ls` | List all profiles, marking default and active |
 | `kiro-profile default [name]` | Get or set the default profile |
 | `kiro-profile local [name]` | Show, set (`.kiro-profile`), or `--remove` the directory-local profile |
 | `kiro-profile auto [on\|off\|status]` | Control directory-local auto-switching |
-| `kiro-profile which [name]` | Print the resolved `KIRO_HOME` path |
+| `kiro-profile which [name]` | Print the resolved `_KIRO_HOME` path |
 | `kiro-profile version` | Show the installed version |
 | `kiro-profile update [--force]` | Update to the latest release |
 | `kiro-profile delete <name>` | Delete a profile and all its data |

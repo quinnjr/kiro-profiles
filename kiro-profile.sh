@@ -9,10 +9,10 @@
 #
 # Each profile is a directory under
 #   ${XDG_DATA_HOME:-$HOME/.local/share}/kiro-profiles/<name>
-# and "using" a profile simply exports KIRO_HOME to point at it. Kiro stores
+# and "using" a profile simply exports _KIRO_HOME to point at it. Kiro stores
 # all of its per-user state (auth/login, settings, agents, prompts, skills,
-# steering, sessions) under KIRO_HOME, defaulting to ~/.kiro. When no profile
-# and no default are active, KIRO_HOME is left unset so Kiro uses ~/.kiro
+# steering, sessions) under _KIRO_HOME, defaulting to ~/.kiro. When no profile
+# and no default are active, _KIRO_HOME is left unset so Kiro uses ~/.kiro
 # exactly as a stock install would.
 #
 # Supports bash and zsh on Linux and macOS. The hyphenated `kiro-cli` /
@@ -98,13 +98,13 @@ _kp_validate_name() {
 }
 
 # Resolves the source directory to import from: an explicit path if given,
-# else $KIRO_HOME if set, else ~/.kiro. Sets _kp_import_src. Returns 1 with a
+# else $_KIRO_HOME if set, else ~/.kiro. Sets _kp_import_src. Returns 1 with a
 # diagnostic if the resolved source is not a readable directory.
 _kp_resolve_import_src() {
     if [ -n "${1:-}" ]; then
         _kp_import_src="$1"
-    elif [ -n "${KIRO_HOME:-}" ]; then
-        _kp_import_src="$KIRO_HOME"
+    elif [ -n "${_KIRO_HOME:-}" ]; then
+        _kp_import_src="$_KIRO_HOME"
     else
         _kp_import_src="${HOME}/.kiro"
     fi
@@ -155,7 +155,7 @@ _kp_make_profile_from() {
     else
         _kp_resolve_import_src "" || return 1
     fi
-    # Guard against importing a profile into itself (KIRO_HOME may already
+    # Guard against importing a profile into itself (_KIRO_HOME may already
     # point at a managed profile dir). Trailing slashes are covered by the glob.
     case "$_kp_import_src" in
         "${_kp_mpf_data}"/*)
@@ -175,7 +175,7 @@ _kp_make_profile_from() {
     # owner-only on the profile root so secrets are never world-readable.
     chmod 700 "$_kp_dir" 2>/dev/null || :
     printf 'Created profile: %s\n' "$_kp_mpf_name"
-    printf 'KIRO_HOME directory: %s\n' "$_kp_dir"
+    printf '_KIRO_HOME directory: %s\n' "$_kp_dir"
     printf 'Imported from: %s\n' "$_kp_import_src"
     printf "Tip: run 'kiro-profile use %s' to activate it.\\n" "$_kp_mpf_name"
     return 0
@@ -493,7 +493,7 @@ _kp_update_check() {
 #
 # A directory may contain a `.kiro-profile` file whose first non-empty,
 # non-comment line names a profile. Entering that directory (or any descendant)
-# switches KIRO_HOME to it; leaving reverts to the default. An explicit
+# switches _KIRO_HOME to it; leaving reverts to the default. An explicit
 # `kiro-profile use <name>` pins the session and suppresses auto-switching
 # until `kiro-profile auto on`.
 #
@@ -501,7 +501,7 @@ _kp_update_check() {
 #   KIRO_PROFILE_NO_AUTO_SWITCH=1   disable auto-switching entirely
 #   KIRO_PROFILE_AUTO_QUIET=1       switch silently (no stderr notices)
 #
-# KIRO_PROFILE_AUTO_SET is exported so nested shells know the current KIRO_HOME
+# KIRO_PROFILE_AUTO_SET is exported so nested shells know the current _KIRO_HOME
 # came from auto-switching (and may be re-managed) rather than an explicit use.
 
 _KP_DOTFILE=".kiro-profile"
@@ -563,9 +563,9 @@ _kp_auto_switch() {
     [ "${PWD:-}" = "${_KP_AUTO_LAST_PWD:-}" ] && return 0
     _KP_AUTO_LAST_PWD="${PWD:-}"
 
-    # An explicitly-chosen profile (kiro-profile use, or a KIRO_HOME inherited
+    # An explicitly-chosen profile (kiro-profile use, or a _KIRO_HOME inherited
     # from outside) wins over any .kiro-profile file.
-    if [ -n "${KIRO_HOME:-}" ] && [ "$KIRO_HOME" != "${KIRO_PROFILE_AUTO_SET:-}" ]; then
+    if [ -n "${_KIRO_HOME:-}" ] && [ "$_KIRO_HOME" != "${KIRO_PROFILE_AUTO_SET:-}" ]; then
         return 0
     fi
 
@@ -576,7 +576,7 @@ _kp_auto_switch() {
 
     if [ -z "$_kp_dotname" ]; then
         if [ -n "${KIRO_PROFILE_AUTO_SET:-}" ]; then
-            unset KIRO_HOME
+            unset _KIRO_HOME
             unset KIRO_PROFILE_AUTO_SET
             _kp_auto_notice "directory profile cleared; using the default profile"
         fi
@@ -598,11 +598,11 @@ _kp_auto_switch() {
         return 1
     fi
 
-    if [ "${KIRO_HOME:-}" = "$_kp_as_dir" ]; then
+    if [ "${_KIRO_HOME:-}" = "$_kp_as_dir" ]; then
         export KIRO_PROFILE_AUTO_SET="$_kp_as_dir"
         return 0
     fi
-    export KIRO_HOME="$_kp_as_dir"
+    export _KIRO_HOME="$_kp_as_dir"
     export KIRO_PROFILE_AUTO_SET="$_kp_as_dir"
     _kp_auto_notice "switched to profile '${_kp_dotname}' (from ${_kp_dotfile})"
     return 0
@@ -636,8 +636,8 @@ _kp_auto_switch
 
 # --- kiro-cli() wrapper ---
 # Auto-resolves the default profile before calling the real kiro-cli binary.
-# If KIRO_HOME is already set (e.g. via 'kiro-profile use'), it passes through
-# without overriding. If nothing resolves, KIRO_HOME is left unset so Kiro uses
+# If _KIRO_HOME is already set (e.g. via 'kiro-profile use'), it passes through
+# without overriding. If nothing resolves, _KIRO_HOME is left unset so Kiro uses
 # its own default (~/.kiro).
 
 # shellcheck disable=SC3033  # hyphenated function name works in bash/zsh
@@ -646,17 +646,17 @@ kiro-cli() {
     # Covers shells whose cd we couldn't hook (and directory changes made by
     # something other than cd) — resolving here is cheap and idempotent.
     _kp_auto_switch
-    if [ -z "${KIRO_HOME:-}" ]; then
+    if [ -z "${_KIRO_HOME:-}" ]; then
         _kp_data=$(_kp_data_dir)
         _kp_def="${_kp_data}/.default"
         if [ -f "$_kp_def" ]; then
             _kp_name=$(cat "$_kp_def")
             if [ -n "$_kp_name" ] && [ -d "${_kp_data}/${_kp_name}" ]; then
-                export KIRO_HOME="${_kp_data}/${_kp_name}"
+                export _KIRO_HOME="${_kp_data}/${_kp_name}"
                 # Mark it auto-managed, not an explicit pin: without this, the
                 # first `kiro-cli` run would freeze the session on the default
                 # profile and later .kiro-profile directories would be ignored.
-                export KIRO_PROFILE_AUTO_SET="$KIRO_HOME"
+                export KIRO_PROFILE_AUTO_SET="$_KIRO_HOME"
             fi
         fi
     fi
@@ -689,7 +689,7 @@ kiro-profile() {
                 _kp_die "profile '${_kp_name}' does not exist. Create it with: kiro-profile create ${_kp_name}"
                 return 1
             fi
-            export KIRO_HOME="$_kp_dir"
+            export _KIRO_HOME="$_kp_dir"
             # Dropping the auto-set marker pins the session: subsequent
             # directory changes will no longer override this choice.
             unset KIRO_PROFILE_AUTO_SET
@@ -701,7 +701,7 @@ kiro-profile() {
             case "${1:-}" in
                 on)
                     unset _KP_AUTO_OFF
-                    unset KIRO_HOME
+                    unset _KIRO_HOME
                     unset KIRO_PROFILE_AUTO_SET
                     _KP_AUTO_LAST_PWD=""
                     _kp_auto_switch
@@ -716,7 +716,7 @@ kiro-profile() {
                         printf 'Auto-switching: disabled (KIRO_PROFILE_NO_AUTO_SWITCH is set)\n'
                     elif [ "${_KP_AUTO_OFF:-0}" = "1" ]; then
                         printf 'Auto-switching: disabled for this session\n'
-                    elif [ -n "${KIRO_HOME:-}" ] && [ "$KIRO_HOME" != "${KIRO_PROFILE_AUTO_SET:-}" ]; then
+                    elif [ -n "${_KIRO_HOME:-}" ] && [ "$_KIRO_HOME" != "${KIRO_PROFILE_AUTO_SET:-}" ]; then
                         printf 'Auto-switching: pinned (an explicit profile is active)\n'
                         printf "Run 'kiro-profile auto on' to resume auto-switching.\\n"
                     else
@@ -840,14 +840,14 @@ kiro-profile() {
             fi
             _kp_mkdir_private "$_kp_dir" || return 1
             printf 'Created profile: %s\n' "$_kp_name"
-            printf 'KIRO_HOME directory: %s\n' "$_kp_dir"
+            printf '_KIRO_HOME directory: %s\n' "$_kp_dir"
             if [ "$_kp_do_init" -eq 1 ]; then
                 mkdir -p "${_kp_dir}/settings"
                 _kp_settings="${_kp_dir}/settings/cli.json"
                 cat > "$_kp_settings" <<'SETTINGSEOF'
 {
   "$schema": "https://kiro.dev/schemas/cli-settings.json",
-  "note": "kiro-profile skeleton — edit or delete keys as needed. Auth/login state is stored under this KIRO_HOME once you run 'kiro-cli login' with this profile active."
+  "note": "kiro-profile skeleton — edit or delete keys as needed. Auth/login state is stored under this _KIRO_HOME once you run 'kiro-cli login' with this profile active."
 }
 SETTINGSEOF
                 printf 'Settings skeleton written to: %s\n' "$_kp_settings"
@@ -895,7 +895,7 @@ SETTINGSEOF
                 shift
             done
             if [ -z "$_kp_name" ]; then
-                _kp_die "usage: kiro-profile import [--from <dir>] <name>  (defaults to \$KIRO_HOME or ~/.kiro)"
+                _kp_die "usage: kiro-profile import [--from <dir>] <name>  (defaults to \$_KIRO_HOME or ~/.kiro)"
                 return 1
             fi
             _kp_make_profile_from "$_kp_data" "$_kp_name" "$_kp_from" "$_kp_from_set" || return 1
@@ -910,12 +910,12 @@ SETTINGSEOF
             if [ -f "$_kp_default_file" ]; then
                 _kp_cur_default=$(cat "$_kp_default_file")
             fi
-            # Derive active profile name from KIRO_HOME
+            # Derive active profile name from _KIRO_HOME
             _kp_active=""
-            if [ -n "${KIRO_HOME:-}" ]; then
-                case "${KIRO_HOME%/}" in
+            if [ -n "${_KIRO_HOME:-}" ]; then
+                case "${_KIRO_HOME%/}" in
                     "${_kp_data}"/*)
-                        _kp_active=$(basename "${KIRO_HOME%/}")
+                        _kp_active=$(basename "${_KIRO_HOME%/}")
                         ;;
                 esac
             fi
@@ -1033,9 +1033,9 @@ SETTINGSEOF
                             printf 'Cleared default profile (was "%s")\n' "$_kp_name"
                         fi
                     fi
-                    # Unset KIRO_HOME if the deleted profile was active
-                    if [ "${KIRO_HOME:-}" = "$_kp_dir" ]; then
-                        unset KIRO_HOME
+                    # Unset _KIRO_HOME if the deleted profile was active
+                    if [ "${_KIRO_HOME:-}" = "$_kp_dir" ]; then
+                        unset _KIRO_HOME
                         unset KIRO_PROFILE_AUTO_SET
                         printf 'Cleared active profile (was "%s")\n' "$_kp_name"
                     fi
@@ -1067,13 +1067,13 @@ Commands:
                             skeleton; --from copies an existing directory into it.
     import [--from <dir>] <name>
                             Create a profile from an existing Kiro directory
-                            (defaults to $KIRO_HOME, else ~/.kiro)
+                            (defaults to $_KIRO_HOME, else ~/.kiro)
     list, ls                List all profiles
     default [name]          Get or set the default profile
     local [name]            Show, set (.kiro-profile), or --remove the
                             directory-local profile for the current directory
     auto [on|off|status]    Control directory-local auto-switching
-    which [name]            Show the resolved KIRO_HOME path
+    which [name]            Show the resolved _KIRO_HOME path
     version                 Show the installed version
     update [--force]        Update to the latest release
     delete <name>           Delete a profile
@@ -1081,7 +1081,7 @@ Commands:
 
 The kiro-cli command automatically uses the default profile. Use
 'kiro-profile use <name>' to override for the current session. With no
-profile and no default active, KIRO_HOME is left unset and Kiro uses its
+profile and no default active, _KIRO_HOME is left unset and Kiro uses its
 own default (~/.kiro).
 
 A directory containing a .kiro-profile file (holding a profile name)
@@ -1107,22 +1107,22 @@ HELPEOF
         "")
             # Bare invocation: show status
             _kp_active=""
-            if [ -n "${KIRO_HOME:-}" ]; then
-                case "${KIRO_HOME%/}" in
+            if [ -n "${_KIRO_HOME:-}" ]; then
+                case "${_KIRO_HOME%/}" in
                     "${_kp_data}"/*)
-                        _kp_active=$(basename "${KIRO_HOME%/}")
+                        _kp_active=$(basename "${_KIRO_HOME%/}")
                         ;;
                 esac
             fi
             if [ -n "$_kp_active" ]; then
-                if [ "${KIRO_HOME:-}" = "${KIRO_PROFILE_AUTO_SET:-}" ] && _kp_find_dotfile "${PWD:-}"; then
+                if [ "${_KIRO_HOME:-}" = "${KIRO_PROFILE_AUTO_SET:-}" ] && _kp_find_dotfile "${PWD:-}"; then
                     printf 'Active profile: %s (from %s)\n' "$_kp_active" "$_kp_dotfile"
                 else
                     printf 'Active profile: %s\n' "$_kp_active"
                 fi
-                printf 'KIRO_HOME: %s\n' "$KIRO_HOME"
-            elif [ -n "${KIRO_HOME:-}" ]; then
-                printf 'Active KIRO_HOME: %s (not a managed profile)\n' "$KIRO_HOME"
+                printf '_KIRO_HOME: %s\n' "$_KIRO_HOME"
+            elif [ -n "${_KIRO_HOME:-}" ]; then
+                printf 'Active _KIRO_HOME: %s (not a managed profile)\n' "$_KIRO_HOME"
             else
                 printf 'No active profile (Kiro will use its default ~/.kiro)\n'
             fi
