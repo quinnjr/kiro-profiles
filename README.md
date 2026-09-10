@@ -40,10 +40,15 @@ kiro-cli login          # authenticates the "work" account into that profile
 
 - Each profile is a directory: `${XDG_DATA_HOME:-~/.local/share}/kiro-profiles/<name>`.
 - `kiro-profile use <name>` exports `KIRO_HOME` to that directory for the session.
-- The `kiro-cli` wrapper resolves a profile before launching: an explicit
+- Sourcing `kiro-profile.sh` (e.g. from `.bashrc`/`.zshrc`) exports `KIRO_HOME`
+  for the configured default profile, so new shells start on the default. Inside
+  a directory tree containing a `.kiro-profile` file, the directory-local profile
+  wins instead; leaving the tree reverts to the default.
+- The `kiro-cli` wrapper re-resolves the same way before launching (an explicit
   `use` wins, otherwise a directory-local `.kiro-profile`, otherwise the
-  configured default. If none resolve, `KIRO_HOME` is left **unset** so Kiro
-  behaves exactly like a stock install (`~/.kiro`).
+  configured default) as a fallback for defaults set after the shell started.
+  If none resolve, `KIRO_HOME` is left **unset** so Kiro behaves exactly like a
+  stock install (`~/.kiro`).
 - Log in once per profile (`kiro-cli login` while the profile is active) and
   each keeps its own independent session.
 
