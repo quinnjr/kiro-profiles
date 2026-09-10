@@ -60,9 +60,12 @@ kiro-profile use work               # now on the imported profile
 
 `import` copies the source directory's full contents (including dotfiles and
 permissions) into the new profile, so the imported profile carries over your
-existing login/session state. It refuses to overwrite an existing profile or
-to import from another managed profile directory. `create --from <dir>` does
-the same thing as part of a `create`.
+existing login/session state. Profile directories are created `0700`
+(owner-only), since they hold auth secrets. `import` reuses an existing
+**empty** profile directory (so `create work` followed by `import work` works),
+but refuses to overwrite a populated profile or to import from another managed
+profile directory. `create --from <dir>` does the same thing as part of a
+`create`.
 
 ## Commands
 
@@ -118,6 +121,12 @@ kiro-profile update
 The updater downloads `kiro-profile.sh` and `VERSION` from the latest GitHub
 release, verifies them against `SHA256SUMS`, and replaces the installed copy
 atomically. Disable the check with `KIRO_PROFILE_NO_UPDATE_CHECK=1`.
+
+> **Trust model:** `SHA256SUMS` is served from the same release as the files
+> it covers, so verification proves download **integrity**, not
+> **authenticity** — trust ultimately rests on GitHub and TLS. Since the
+> updater overwrites a script you source into every shell, treat it as an
+> RCE-equivalent trust boundary and pin to releases you trust.
 
 ## License
 
