@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck (POSIX sh)
+        run: |
+          shellcheck -s sh kiro-profile.sh
+          shellcheck -s sh install.sh
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Source + exercise commands in sh, bash, zsh
+        run: |
+          set -eu
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null
+          for shell in sh bash zsh; do
+            echo "=== $shell ==="
+            "$shell" -eu -c '
+              export XDG_DATA_HOME="$(mktemp -d)"
+              export KIRO_PROFILE_NO_UPDATE_CHECK=1
+              . ./kiro-profile.sh
+
+              # A fake source dir to import from, with a restrictive secret.
+              fake="$(mktemp -d)"; mkdir -p "$fake/settings"
+              echo secret > "$fake/secrets.json"; chmod 600 "$fake/secrets.json"
+
+              kiro-profile create plain >/dev/null
+              kiro-profile create --init inited >/dev/null
+              kiro-profile import --from "$fake" work >/dev/null
+              kiro-profile default work >/dev/null
+              kiro-profile list
+
+              # Profile dirs must be owner-only (0700); secret mode preserved.
+              perms=$(stat -c "%a" "$XDG_DATA_HOME/kiro-profiles/work")
+              [ "$perms" = "700" ] || { echo "profile dir not 0700 ($perms)"; exit 1; }
+              sperms=$(stat -c "%a" "$XDG_DATA_HOME/kiro-profiles/work/secrets.json")
+              [ "$sperms" = "600" ] || { echo "secret not 0600 ($sperms)"; exit 1; }
+
+              # Guards: populated refuse, self-import refuse.
+              kiro-profile import --from "$fake" work 2>/dev/null && { echo "populated import not refused"; exit 1; } || true
+              kiro-profile import --from "$XDG_DATA_HOME/kiro-profiles/work" evil 2>/dev/null && { echo "self-import not refused"; exit 1; } || true
+
+              echo "'"$shell"' smoke OK"
+            '
+          done
