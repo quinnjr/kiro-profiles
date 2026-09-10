@@ -26,13 +26,42 @@ _kp_die() {
 
 # Resolves the profile data directory (plural "kiro-profiles"), honoring XDG.
 _kp_data_dir() {
-    printf '%s\n' "${XDG_DATA_HOME:-${HOME}/.local/share}/kiro-profiles"
+    _kp_dd_base="${XDG_DATA_HOME:-${HOME}/.local/share}"
+    # A relative XDG_DATA_HOME would make every profile path relative, which
+    # breaks the directory-local auto-switch resolution (it compares against an
+    # absolute $PWD) and cp targets. Fall back to the default in that case.
+    case "$_kp_dd_base" in
+        /*) : ;;
+        *)
+            _kp_die "ignoring non-absolute XDG_DATA_HOME '${_kp_dd_base}'; using ~/.local/share"
+            _kp_dd_base="${HOME}/.local/share"
+            ;;
+    esac
+    printf '%s\n' "${_kp_dd_base}/kiro-profiles"
 }
 
 # Resolves the tool's own install directory (singular "kiro-profile"),
-# distinct from the plural data directory. Honors XDG.
+# distinct from the plural data directory. Honors XDG (absolute only).
 _kp_install_dir() {
-    printf '%s\n' "${XDG_DATA_HOME:-${HOME}/.local/share}/kiro-profile"
+    _kp_id_base="${XDG_DATA_HOME:-${HOME}/.local/share}"
+    case "$_kp_id_base" in
+        /*) : ;;
+        *) _kp_id_base="${HOME}/.local/share" ;;
+    esac
+    printf '%s\n' "${_kp_id_base}/kiro-profile"
+}
+
+# Creates a directory (and parents) with owner-only 0700 permissions, so
+# profile trees holding auth/session secrets are never group/other-readable.
+# Usage: _kp_mkdir_private <dir>
+_kp_mkdir_private() {
+    ( umask 077 && mkdir -p "$1" ) || {
+        _kp_die "could not create directory '$1'"
+        return 1
+    }
+    # mkdir -p won't tighten an already-existing dir; enforce 0700 on the leaf.
+    chmod 700 "$1" 2>/dev/null || :
+    return 0
 }
 
 _kp_validate_name() {
@@ -87,12 +116,66 @@ _kp_resolve_import_src() {
 # Copies the full contents of directory $1 into the (already-created, empty)
 # profile directory $2, preserving permissions and including dotfiles. Uses a
 # trailing "/." on the source so the directory's contents — not the directory
-# itself — land in the target.
+# itself — land in the target. cp's own stderr is surfaced so a real cause
+# (permissions, ENOSPC) isn't hidden behind a generic message.
 _kp_copy_tree() {
-    cp -a "${1%/}/." "$2/" 2>/dev/null || {
+    if ! cp -a "${1%/}/." "$2/"; then
         _kp_die "failed to copy '${1}' into '${2}'"
         return 1
-    }
+    fi
+    return 0
+}
+
+# Shared implementation behind `import` and `create --from`: validates the
+# name, refuses an existing NON-EMPTY profile (an existing empty dir is
+# reused, so `create work` followed by `import work` no longer dead-ends),
+# resolves and sanity-checks the source, creates the profile dir 0700, and
+# copies the tree in. On success sets _kp_dir. Usage:
+#   _kp_make_profile_from <data_dir> <name> <from_or_empty> <from_set:0|1>
+_kp_make_profile_from() {
+    _kp_mpf_data="$1"
+    _kp_mpf_name="$2"
+    _kp_mpf_from="$3"
+    _kp_mpf_from_set="$4"
+
+    _kp_validate_name "$_kp_mpf_name" || return 1
+    _kp_dir="${_kp_mpf_data}/${_kp_mpf_name}"
+    if [ -d "$_kp_dir" ]; then
+        # Reuse an existing empty dir; refuse a populated one.
+        if [ -n "$(ls -A "$_kp_dir" 2>/dev/null)" ]; then
+            _kp_die "profile '${_kp_mpf_name}' already exists"
+            return 1
+        fi
+    fi
+
+    if [ "$_kp_mpf_from_set" -eq 1 ]; then
+        _kp_resolve_import_src "$_kp_mpf_from" || return 1
+    else
+        _kp_resolve_import_src "" || return 1
+    fi
+    # Guard against importing a profile into itself (KIRO_HOME may already
+    # point at a managed profile dir). Trailing slashes are covered by the glob.
+    case "$_kp_import_src" in
+        "${_kp_mpf_data}"/*)
+            _kp_die "refusing to import from another managed profile directory: ${_kp_import_src}"
+            return 1
+            ;;
+    esac
+
+    _kp_mkdir_private "$_kp_dir" || return 1
+    if ! _kp_copy_tree "$_kp_import_src" "$_kp_dir"; then
+        # Only clean up a dir we just made empty; never rm a reused populated one.
+        rmdir "$_kp_dir" 2>/dev/null || :
+        return 1
+    fi
+    # cp -a copies the SOURCE directory's mode onto the destination, which can
+    # loosen the 0700 we just set (e.g. importing a 0755 ~/.kiro). Re-assert
+    # owner-only on the profile root so secrets are never world-readable.
+    chmod 700 "$_kp_dir" 2>/dev/null || :
+    printf 'Created profile: %s\n' "$_kp_mpf_name"
+    printf 'KIRO_HOME directory: %s\n' "$_kp_dir"
+    printf 'Imported from: %s\n' "$_kp_import_src"
+    printf "Tip: run 'kiro-profile use %s' to activate it.\\n" "$_kp_mpf_name"
     return 0
 }
 
@@ -249,6 +332,15 @@ _kp_do_update() {
         return 1
     fi
 
+    # TRUST MODEL: SHA256SUMS is fetched from the same GitHub release as the
+    # artifacts it checksums, so this verifies transfer INTEGRITY (a truncated
+    # or corrupted download is caught) but NOT AUTHENTICITY beyond whatever
+    # trust you place in GitHub + TLS. Anyone able to publish a release to
+    # quinnjr/kiro-profiles controls both files. This updater overwrites the
+    # very script you source into every shell, so treat it as an
+    # RCE-equivalent trust boundary. If stronger guarantees are ever needed,
+    # add detached signatures (minisign/cosign) verified against a public key
+    # pinned in this script — do not mistake the checksum below for that.
     if ! _kp_verify_checksum "${_kp_upd_tmpdir}/VERSION" "${_kp_upd_tmpdir}/SHA256SUMS"; then
         _kp_die "update failed: VERSION checksum mismatch"
         rm -rf "$_kp_upd_tmpdir"
@@ -734,26 +826,17 @@ kiro-profile() {
                 _kp_die "--init and --from are mutually exclusive"
                 return 1
             fi
+            if [ "$_kp_from_set" -eq 1 ]; then
+                _kp_make_profile_from "$_kp_data" "$_kp_name" "$_kp_from" 1 || return 1
+                return 0
+            fi
             _kp_validate_name "$_kp_name" || return 1
             _kp_dir="${_kp_data}/${_kp_name}"
-            if [ -d "$_kp_dir" ]; then
+            if [ -d "$_kp_dir" ] && [ -n "$(ls -A "$_kp_dir" 2>/dev/null)" ]; then
                 _kp_die "profile '${_kp_name}' already exists"
                 return 1
             fi
-            if [ "$_kp_from_set" -eq 1 ]; then
-                _kp_resolve_import_src "$_kp_from" || return 1
-                mkdir -p "$_kp_dir"
-                if ! _kp_copy_tree "$_kp_import_src" "$_kp_dir"; then
-                    rmdir "$_kp_dir" 2>/dev/null || :
-                    return 1
-                fi
-                printf 'Created profile: %s\n' "$_kp_name"
-                printf 'KIRO_HOME directory: %s\n' "$_kp_dir"
-                printf 'Imported from: %s\n' "$_kp_import_src"
-                printf "Tip: run 'kiro-profile use %s' to activate it.\\n" "$_kp_name"
-                return 0
-            fi
-            mkdir -p "$_kp_dir"
+            _kp_mkdir_private "$_kp_dir" || return 1
             printf 'Created profile: %s\n' "$_kp_name"
             printf 'KIRO_HOME directory: %s\n' "$_kp_dir"
             if [ "$_kp_do_init" -eq 1 ]; then
@@ -813,34 +896,7 @@ SETTINGSEOF
                 _kp_die "usage: kiro-profile import [--from <dir>] <name>  (defaults to \$KIRO_HOME or ~/.kiro)"
                 return 1
             fi
-            _kp_validate_name "$_kp_name" || return 1
-            _kp_dir="${_kp_data}/${_kp_name}"
-            if [ -d "$_kp_dir" ]; then
-                _kp_die "profile '${_kp_name}' already exists"
-                return 1
-            fi
-            if [ "$_kp_from_set" -eq 1 ]; then
-                _kp_resolve_import_src "$_kp_from" || return 1
-            else
-                _kp_resolve_import_src "" || return 1
-            fi
-            # Guard against importing a profile into itself (e.g. KIRO_HOME
-            # already points at a managed profile dir).
-            case "$_kp_import_src" in
-                "${_kp_data}"/*)
-                    _kp_die "refusing to import from another managed profile directory: ${_kp_import_src}"
-                    return 1
-                    ;;
-            esac
-            mkdir -p "$_kp_dir"
-            if ! _kp_copy_tree "$_kp_import_src" "$_kp_dir"; then
-                rmdir "$_kp_dir" 2>/dev/null || :
-                return 1
-            fi
-            printf 'Created profile: %s\n' "$_kp_name"
-            printf 'KIRO_HOME directory: %s\n' "$_kp_dir"
-            printf 'Imported from: %s\n' "$_kp_import_src"
-            printf "Tip: run 'kiro-profile use %s' to activate it.\\n" "$_kp_name"
+            _kp_make_profile_from "$_kp_data" "$_kp_name" "$_kp_from" "$_kp_from_set" || return 1
             ;;
 
         list|ls)
@@ -855,9 +911,9 @@ SETTINGSEOF
             # Derive active profile name from KIRO_HOME
             _kp_active=""
             if [ -n "${KIRO_HOME:-}" ]; then
-                case "$KIRO_HOME" in
+                case "${KIRO_HOME%/}" in
                     "${_kp_data}"/*)
-                        _kp_active=$(basename "$KIRO_HOME")
+                        _kp_active=$(basename "${KIRO_HOME%/}")
                         ;;
                 esac
             fi
@@ -913,7 +969,7 @@ SETTINGSEOF
                 _kp_die "profile '${_kp_name}' does not exist. Create it with: kiro-profile create ${_kp_name}"
                 return 1
             fi
-            mkdir -p "$_kp_data"
+            _kp_mkdir_private "$_kp_data" || return 1
             printf '%s' "$_kp_name" > "$_kp_default_file"
             printf 'Default profile set to: %s\n' "$_kp_name"
             ;;
@@ -1050,9 +1106,9 @@ HELPEOF
             # Bare invocation: show status
             _kp_active=""
             if [ -n "${KIRO_HOME:-}" ]; then
-                case "$KIRO_HOME" in
+                case "${KIRO_HOME%/}" in
                     "${_kp_data}"/*)
-                        _kp_active=$(basename "$KIRO_HOME")
+                        _kp_active=$(basename "${KIRO_HOME%/}")
                         ;;
                 esac
             fi
