@@ -11,8 +11,8 @@ skills, steering, sessions) under `KIRO_HOME`, defaulting to `~/.kiro`.
 the right one is always active — including optional directory-local
 auto-switching via a `.kiro-profile` file.
 
-Works with `sh`/`dash`/`ash`/`ksh`, `bash`, and `zsh` on Linux and macOS.
-(Windows / MSYS is not supported yet.)
+Works with `bash` and `zsh` on Linux and macOS. (Windows / MSYS is not
+supported yet.)
 
 ## Install
 

@@ -24,11 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Source + exercise commands in sh, bash, zsh
+      - name: Source + exercise commands in bash and zsh
         run: |
           set -eu
           sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null
-          for shell in sh bash zsh; do
+          for shell in bash zsh; do
             echo "=== $shell ==="
             "$shell" -eu -c '
               export XDG_DATA_HOME="$(mktemp -d)"
