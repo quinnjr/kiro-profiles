@@ -1,0 +1,11 @@
+# Worktrees live here (git-flow feature/hotfix isolation)
+.worktrees/
+
+# Editor / OS cruft
+*.swp
+*~
+.DS_Store
+
+# Local update-check cache, should never be committed
+.update-check
+.update-check-diag
