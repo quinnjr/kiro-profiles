@@ -11,9 +11,11 @@
 #   ${XDG_DATA_HOME:-$HOME/.local/share}/kiro-profiles/<name>
 # and "using" a profile simply exports KIRO_HOME to point at it. Kiro stores
 # all of its per-user state (auth/login, settings, agents, prompts, skills,
-# steering, sessions) under KIRO_HOME, defaulting to ~/.kiro. When no profile
-# and no default are active, KIRO_HOME is left unset so Kiro uses ~/.kiro
-# exactly as a stock install would.
+# steering, sessions) under KIRO_HOME, defaulting to ~/.kiro. Sourcing this
+# file exports KIRO_HOME for the configured default profile (or the
+# directory-local profile when inside a .kiro-profile tree), so new shells
+# start on the default. When no profile and no default are active, KIRO_HOME
+# is left unset so Kiro uses ~/.kiro exactly as a stock install would.
 #
 # Supports bash and zsh on Linux and macOS. The hyphenated `kiro-cli` /
 # `kiro-profile` function names are not valid in strict POSIX sh (dash), so a
@@ -554,6 +556,28 @@ _kp_read_dotfile() {
     return 1
 }
 
+# Applies the configured default profile when KIRO_HOME is unset. Silent by
+# design (runs at shell startup): sets KIRO_HOME and KIRO_PROFILE_AUTO_SET so
+# later directory switches still work, and sets _kp_def_name to the applied
+# profile name. Returns 1 when there is nothing to apply (KIRO_HOME already
+# set, or no/invalid default). Corrupt default files are ignored quietly —
+# `kiro-profile default` / `which` report those problems on demand.
+_kp_try_default() {
+    [ -n "${KIRO_HOME:-}" ] && return 1
+    [ -n "${_KP_DATA_CACHE:-}" ] || _KP_DATA_CACHE=$(_kp_data_dir)
+    _kp_td_file="${_KP_DATA_CACHE}/.default"
+    [ -f "$_kp_td_file" ] || return 1
+    _kp_def_name=$(cat "$_kp_td_file" 2>/dev/null)
+    [ -n "${_kp_def_name:-}" ] || return 1
+    case "$_kp_def_name" in
+        .*|*..*|*/*|*\\*|*[!A-Za-z0-9_-]*) return 1 ;;
+    esac
+    [ -d "${_KP_DATA_CACHE}/${_kp_def_name}" ] || return 1
+    export KIRO_HOME="${_KP_DATA_CACHE}/${_kp_def_name}"
+    export KIRO_PROFILE_AUTO_SET="$KIRO_HOME"
+    return 0
+}
+
 # Resolves and applies the directory-local profile for $PWD. Safe to call
 # repeatedly: short-circuits when the directory hasn't changed, which also
 # rate-limits the warnings below to once per directory entry.
@@ -578,7 +602,11 @@ _kp_auto_switch() {
         if [ -n "${KIRO_PROFILE_AUTO_SET:-}" ]; then
             unset KIRO_HOME
             unset KIRO_PROFILE_AUTO_SET
-            _kp_auto_notice "directory profile cleared; using the default profile"
+            if _kp_try_default; then
+                _kp_auto_notice "directory profile cleared; using default profile '${_kp_def_name}'"
+            else
+                _kp_auto_notice "directory profile cleared; KIRO_HOME unset (Kiro will use ~/.kiro)"
+            fi
         fi
         [ -n "$_kp_dotfile" ] && _kp_die "ignoring ${_kp_dotfile}: no profile name in file"
         return 0
@@ -630,12 +658,17 @@ else
     }'
 fi
 
-# Resolve once at source time so a shell started inside a .kiro-profile tree is
-# already on the right profile.
+# Resolve once at source time so a new shell starts on the right profile:
+# inside a .kiro-profile tree that profile wins, otherwise the configured
+# default applies (when set). An inherited KIRO_HOME is left untouched.
+# Silent when the default applies — every login printing would be noise.
 _kp_auto_switch
+_kp_try_default || :
 
 # --- kiro-cli() wrapper ---
-# Auto-resolves the default profile before calling the real kiro-cli binary.
+# Re-resolves the profile before calling the real kiro-cli binary. Normally
+# KIRO_HOME is already set at shell startup (directory profile or default),
+# so this is a fallback for defaults configured after the shell started.
 # If KIRO_HOME is already set (e.g. via 'kiro-profile use'), it passes through
 # without overriding. If nothing resolves, KIRO_HOME is left unset so Kiro uses
 # its own default (~/.kiro).
@@ -646,20 +679,10 @@ kiro-cli() {
     # Covers shells whose cd we couldn't hook (and directory changes made by
     # something other than cd) — resolving here is cheap and idempotent.
     _kp_auto_switch
-    if [ -z "${KIRO_HOME:-}" ]; then
-        _kp_data=$(_kp_data_dir)
-        _kp_def="${_kp_data}/.default"
-        if [ -f "$_kp_def" ]; then
-            _kp_name=$(cat "$_kp_def")
-            if [ -n "$_kp_name" ] && [ -d "${_kp_data}/${_kp_name}" ]; then
-                export KIRO_HOME="${_kp_data}/${_kp_name}"
-                # Mark it auto-managed, not an explicit pin: without this, the
-                # first `kiro-cli` run would freeze the session on the default
-                # profile and later .kiro-profile directories would be ignored.
-                export KIRO_PROFILE_AUTO_SET="$KIRO_HOME"
-            fi
-        fi
-    fi
+    # Fallback for a default set after this shell started. _kp_try_default
+    # marks the result auto-managed (not an explicit pin) so later
+    # .kiro-profile directories are still honored.
+    _kp_try_default || :
     command kiro-cli "$@"
 }
 
@@ -705,6 +728,7 @@ kiro-profile() {
                     unset KIRO_PROFILE_AUTO_SET
                     _KP_AUTO_LAST_PWD=""
                     _kp_auto_switch
+                    _kp_try_default || :
                     printf 'Directory-local auto-switching enabled.\n'
                     ;;
                 off)
@@ -1079,7 +1103,9 @@ Commands:
     delete <name>           Delete a profile
     help, -h, --help        Show this help message
 
-The kiro-cli command automatically uses the default profile. Use
+New shells start on the configured default profile (or the
+directory-local profile inside a .kiro-profile tree); the kiro-cli
+command falls back to the default the same way. Use
 'kiro-profile use <name>' to override for the current session. With no
 profile and no default active, KIRO_HOME is left unset and Kiro uses its
 own default (~/.kiro).
