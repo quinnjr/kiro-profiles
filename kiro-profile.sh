@@ -580,7 +580,9 @@ _kp_try_default() {
 
 # Resolves and applies the directory-local profile for $PWD. Safe to call
 # repeatedly: short-circuits when the directory hasn't changed, which also
-# rate-limits the warnings below to once per directory entry.
+# rate-limits the warnings below to once per directory entry. Always returns
+# 0: the cd wrapper forwards its status, and a bad .kiro-profile file must
+# not make a successful directory change look like a failure.
 _kp_auto_switch() {
     [ -n "${KIRO_PROFILE_NO_AUTO_SWITCH:-}" ] && return 0
     [ "${_KP_AUTO_OFF:-0}" = "1" ] && return 0
@@ -592,6 +594,13 @@ _kp_auto_switch() {
     if [ -n "${KIRO_HOME:-}" ] && [ "$KIRO_HOME" != "${KIRO_PROFILE_AUTO_SET:-}" ]; then
         return 0
     fi
+    # KIRO_HOME gone but the auto-set marker survived: the user ran `unset
+    # KIRO_HOME` by hand. Honor that instead of re-applying a default over it,
+    # and drop the stale marker so it can't trigger a bogus "cleared" notice.
+    if [ -z "${KIRO_HOME:-}" ] && [ -n "${KIRO_PROFILE_AUTO_SET:-}" ]; then
+        unset KIRO_PROFILE_AUTO_SET
+        _KP_AUTO_DOTFILE_HOME=""
+    fi
 
     _kp_dotname=""
     if _kp_find_dotfile "${PWD:-}"; then
@@ -600,12 +609,26 @@ _kp_auto_switch() {
 
     if [ -z "$_kp_dotname" ]; then
         if [ -n "${KIRO_PROFILE_AUTO_SET:-}" ]; then
+            _kp_as_prev="${KIRO_HOME%/}"
+            # Was the outgoing profile chosen by a .kiro-profile file, or was
+            # it the default? Decides the wording below.
+            if [ "$_kp_as_prev" = "${_KP_AUTO_DOTFILE_HOME:-}" ]; then
+                _kp_as_why="directory profile cleared"
+            else
+                _kp_as_why="default profile changed"
+            fi
+            _KP_AUTO_DOTFILE_HOME=""
             unset KIRO_HOME
             unset KIRO_PROFILE_AUTO_SET
             if _kp_try_default; then
-                _kp_auto_notice "directory profile cleared; using default profile '${_kp_def_name}'"
-            else
+                # Already on the default (e.g. applied at login): nothing
+                # changed, so stay quiet instead of announcing on every cd.
+                [ "${KIRO_HOME%/}" = "$_kp_as_prev" ] ||
+                    _kp_auto_notice "${_kp_as_why}; using default profile '${_kp_def_name}'"
+            elif [ "$_kp_as_why" = "directory profile cleared" ]; then
                 _kp_auto_notice "directory profile cleared; KIRO_HOME unset (Kiro will use ~/.kiro)"
+            else
+                _kp_auto_notice "default profile no longer available; KIRO_HOME unset (Kiro will use ~/.kiro)"
             fi
         fi
         [ -n "$_kp_dotfile" ] && _kp_die "ignoring ${_kp_dotfile}: no profile name in file"
@@ -615,7 +638,7 @@ _kp_auto_switch() {
     case "$_kp_dotname" in
         .*|*..*|*/*|*\\*|*[!A-Za-z0-9_-]*)
             _kp_die "ignoring ${_kp_dotfile}: invalid profile name '${_kp_dotname}'"
-            return 1
+            return 0
             ;;
     esac
 
@@ -623,9 +646,10 @@ _kp_auto_switch() {
     _kp_as_dir="${_KP_DATA_CACHE}/${_kp_dotname}"
     if [ ! -d "$_kp_as_dir" ]; then
         _kp_die "ignoring ${_kp_dotfile}: profile '${_kp_dotname}' does not exist"
-        return 1
+        return 0
     fi
 
+    _KP_AUTO_DOTFILE_HOME="$_kp_as_dir"
     if [ "${KIRO_HOME:-}" = "$_kp_as_dir" ]; then
         export KIRO_PROFILE_AUTO_SET="$_kp_as_dir"
         return 0
